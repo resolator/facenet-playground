@@ -1,3 +1,4 @@
 tensorflow-gpu==1.15.2
 numpy
-opencv-python
+opencv-python>=4.3.0
+nmslib>=2.0.6
