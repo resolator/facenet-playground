@@ -62,8 +62,9 @@ class FaceNet:
 
         Parameters
         ----------
-        cv_bgr_imgs : array-like
-            Array with BGR images (supposed to be read with cv2.imread()).
+        cv_bgr_imgs : array-like or str
+            Array with BGR images (supposed to be read with cv2.imread).
+            If array of str passed then try to read them with cv2.imread.
 
         Returns
         -------
@@ -71,8 +72,10 @@ class FaceNet:
             An array with calculated embeddings for each image.
 
         """
-        # bgr to rgb
-        cv_rgb_imgs = [x[:, :, ::-1] for x in cv_bgr_imgs]
+        if isinstance(cv_bgr_imgs[0], str):
+            cv_rgb_imgs = [cv2.imread(x)[:, :, ::-1] for x in cv_bgr_imgs]
+        else:
+            cv_rgb_imgs = [x[:, :, ::-1] for x in cv_bgr_imgs]
 
         # resize
         model_img_shape = (160, 160)
