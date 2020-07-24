@@ -10,7 +10,7 @@ import pandas as pd
 
 from tqdm import tqdm
 from pathlib import Path
-from facenet import FaceNet
+from face_net import FaceNet
 
 
 def get_args():
