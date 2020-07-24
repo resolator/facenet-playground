@@ -2,9 +2,13 @@
 # -*- coding: utf-8 -*
 """Demo application to use FaceNet."""
 import cv2
+import sys
 import nmslib
 import argparse
 
+import pandas as pd
+
+from tqdm import tqdm
 from pathlib import Path
 from facenet import FaceNet
 
@@ -20,7 +24,8 @@ def get_args():
                              'database.')
     parser.add_argument('--img-path',
                         help='Path to image for search in database.')
-    parser.add_argument('--model-path', default='../data/facenet.pb',
+    parser.add_argument('--model-path',
+                        default=sys.path[0] + '/../data/facenet.pb',
                         help='Path to saved model.')
     parser.add_argument('--bs', type=int, default=1,
                         help='Batch size for testing dir. Increasing could '
@@ -71,21 +76,20 @@ def predict(images_dir, db, net, bs=1):
 
     Returns
     -------
-    List
-        List of pairs [dataset_idx, img_path].
+    dict
+        Dict with closest indexes in the database and image paths.
 
     """
     imgs_paths = list(images_dir.glob('*'))
 
     db_idxs = []
-    for i in range(0, len(imgs_paths), bs):
+    for i in tqdm(range(0, len(imgs_paths), bs), desc='Predicting'):
         batch_paths = imgs_paths[i:i + bs]
-        imgs = [cv2.imread(x) for x in batch_paths]
+        imgs = [cv2.imread(str(x)) for x in batch_paths]
         embds = net.calc_embeddings(imgs)
-        db_out = db.knnQueryBatch(embds, k=1)
-        db_idxs.extend([[x[0][0], y] for x, y in zip(db_out, batch_paths)])
+        db_idxs.extend([x[0][0] for x in db.knnQueryBatch(embds, k=1)])
 
-    return db_idxs
+    return {'db_idx': db_idxs, 'test_name': [int(x.stem) for x in imgs_paths]}
 
 
 def main():
@@ -93,8 +97,12 @@ def main():
     args = get_args()
 
     if args.img_path is None and args.testing_dir is None:
-        print('Nothing to process. Pass --img-path or --testing-dir.')
-        return
+        raise RuntimeError(
+            'nothing to process. Pass --img-path or --testing-dir.'
+        )
+
+    if args.testing_dir is not None and args.save_to is None:
+        raise NotImplementedError('pass also --save-to with --testing-dir.')
 
     # calculate embeddings and create a database
     net = FaceNet(args.model_path)
@@ -102,7 +110,7 @@ def main():
 
     for img_path in args.database_dir.glob('*'):
         emb = net.calc_embeddings([str(img_path)])[0]
-        db.addDataPoint(emb)
+        db.addDataPoint(data=emb, id=int(img_path.stem))
 
     db.createIndex(print_progress=True)
 
@@ -111,9 +119,12 @@ def main():
         # TODO: do something with output
         predict_once(args.img_path, db, net)
 
-    if args.img_path is not None:
-        # TODO: do something with output
-        predict(args.testing_dir, db, net)
+    if args.testing_dir is not None:
+        predicted = predict(args.testing_dir, db, net, args.bs)
+        args.save_to.mkdir(parents=True, exist_ok=True)
+        save_file = args.save_to.joinpath('predicts.tsv')
+        df = pd.DataFrame(predicted)
+        df.to_csv(save_file, index=False, sep='\t', header=False)
 
     print('Done!\n')
 
