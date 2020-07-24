@@ -11,6 +11,7 @@ import pandas as pd
 from tqdm import tqdm
 from pathlib import Path
 from face_net import FaceNet
+from face_detector import FaceDetector
 
 
 def get_args():
@@ -30,6 +31,17 @@ def get_args():
     parser.add_argument('--bs', type=int, default=1,
                         help='Batch size for testing dir. Increasing could '
                              'speed up testing.')
+    parser.add_argument('--scale-factor', type=float, default=1.01,
+                        help='Hyperparameter for face detection.')
+    parser.add_argument('--min-neighbors', type=int, default=5,
+                        help='Hyperparameter for face detection.')
+    parser.add_argument('--detector-name',
+                        default='haarcascade_frontalface_alt.xml',
+                        choices=['haarcascade_frontalface_alt.xml',
+                                 'haarcascade_frontalface_default.xml',
+                                 'haarcascade_frontalface_alt_tree.xml',
+                                 'haarcascade_frontalface_alt2.xml'],
+                        help='Name of the cascade config (model name).')
     parser.add_argument('--save-to', type=Path,
                         help='Path to save dir.')
 
@@ -60,7 +72,7 @@ def predict_once(img_path, db, net):
     return db_idx
 
 
-def predict(images_dir, db, net, bs=1):
+def predict(images_dir, db, net, detector, bs=1):
     """Search closest neighbor in the database for each image in images_dir.
 
     Parameters
@@ -70,7 +82,9 @@ def predict(images_dir, db, net, bs=1):
     db : nmslib.Index
         nmslib database.
     net : FaceNet
-        Instance of FaceNet.
+        Instance of the FaceNet.
+    detector : FaceDetector
+        Instance of the FaceDetector.
     bs : int
         Batch size (increasing could speed up calculation).
 
@@ -86,7 +100,10 @@ def predict(images_dir, db, net, bs=1):
     for i in tqdm(range(0, len(imgs_paths), bs), desc='Predicting'):
         batch_paths = imgs_paths[i:i + bs]
         imgs = [cv2.imread(str(x)) for x in batch_paths]
-        embds = net.calc_embeddings(imgs)
+        print(batch_paths[0])
+        print(imgs[0])
+        faces = [detector.detect_and_cut(x) for x in imgs]
+        embds = net.calc_embeddings(faces)
         db_idxs.extend([x[0][0] for x in db.knnQueryBatch(embds, k=1)])
 
     return {'db_idx': db_idxs, 'test_name': [int(x.stem) for x in imgs_paths]}
@@ -106,6 +123,9 @@ def main():
 
     # calculate embeddings and create a database
     net = FaceNet(args.model_path)
+    detector = FaceDetector(scale_factor=args.scale_factor,
+                            min_neighbors=args.min_neighbors,
+                            model_name=args.detector_name)
     db = nmslib.init(method='hnsw', space='l2')
 
     for img_path in args.database_dir.glob('*'):
@@ -120,7 +140,7 @@ def main():
         predict_once(args.img_path, db, net)
 
     if args.testing_dir is not None:
-        predicted = predict(args.testing_dir, db, net, args.bs)
+        predicted = predict(args.testing_dir, db, net, detector, args.bs)
         args.save_to.mkdir(parents=True, exist_ok=True)
         save_file = args.save_to.joinpath('predicts.tsv')
         df = pd.DataFrame(predicted)
