@@ -2,3 +2,5 @@ tensorflow-gpu==1.15.2
 numpy
 opencv-python>=4.3.0
 nmslib>=2.0.6
+pandas>=1.0.5
+tqdm>=4.48.0
