@@ -22,7 +22,7 @@ def get_args():
     parser.add_argument('--database-dir', type=Path, required=True,
                         help='Path to dir with images only for create a '
                              'database.')
-    parser.add_argument('--testing-dir',
+    parser.add_argument('--testing-dir', type=Path,
                         help='Path to dir with images only for search in '
                              'database.')
     parser.add_argument('--already-faces', action='store_true',
