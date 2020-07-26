@@ -1,5 +1,6 @@
-tensorflow-gpu==1.15.2
-numpy
+setuptools>=49.2.0
+tensorflow-gpu==2.3.0rc2
+numpy>=1.16.0,<1.19.0
 opencv-python>=4.3.0
 nmslib>=2.0.6
 pandas>=1.0.5
