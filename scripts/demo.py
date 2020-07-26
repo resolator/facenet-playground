@@ -25,8 +25,6 @@ def get_args():
     parser.add_argument('--testing-dir', type=Path,
                         help='Path to dir with images only for search in '
                              'database.')
-    parser.add_argument('--already-faces', action='store_true',
-                        help='Testing dir already contains faces only.')
     parser.add_argument('--img-path',
                         help='Path to image for search in database.')
     parser.add_argument('--model-path',
