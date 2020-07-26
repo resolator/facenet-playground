@@ -66,13 +66,20 @@ class FaceDetector:
 
         return img, pad_params
 
+    def _apply(self, inp):
+        outputs = self._det(inp)
+        boxes_batch = outputs['tf_op_layer_CombinedNonMaxSuppression'].numpy()
+        boxes_batch = np.squeeze(boxes_batch, axis=1)  # model returns 1 box
+
+        return boxes_batch
+
     def detect_and_cut(self, imgs_batch, rs_size=(150, 150)):
         """Detect faces, cut first one and return resulted image.
 
         Parameters
         ----------
         imgs_batch : array of numpy.ndarray
-            Read BGR images.
+            Read RGB images.
         rs_size : tuple
             Resize images to this size before forward pass.
 
@@ -83,7 +90,7 @@ class FaceDetector:
 
         """
         # prepare data
-        rgb_rs_batch = [cv2.resize(x[:, :, ::-1], rs_size) for x in imgs_batch]
+        rgb_rs_batch = [cv2.resize(x, rs_size) for x in imgs_batch]
         pad_batch = [self.pad_img(x) for x in rgb_rs_batch]
 
         pad_params = [x[1] for x in pad_batch]
@@ -91,24 +98,37 @@ class FaceDetector:
 
         inp = tf.constant(imgs_pad, dtype=tf.float32)
 
-        outputs = self._det(inp)
-
-        boxes_batch = outputs['tf_op_layer_CombinedNonMaxSuppression'].numpy()
+        boxes_batch = self._apply(inp)
         # confs = outputs['tf_op_layer_CombinedNonMaxSuppression_1'].numpy()
 
         # postprocessing
-        boxes_batch = np.squeeze(boxes_batch, axis=1)  # model returns 1 box
         boxes_batch = [self.unpad_boxes(x, y)
                        for x, y in zip(boxes_batch, pad_params)]
 
+        cropped_imgs = self.crop(imgs_batch, boxes_batch)
+
+        return cropped_imgs
+
+    @staticmethod
+    def crop(images, boxes):
         cropped_imgs = []
-        for img, box in zip(imgs_batch, boxes_batch):
+        for img, box in zip(images, boxes):
+            box = np.abs(box)
             # relative x1, y1, x2, y2
             x1 = int(img.shape[0] * box[0])
             y1 = int(img.shape[1] * box[1])
             x2 = int(img.shape[0] * box[2])
             y2 = int(img.shape[1] * box[3])
 
-            cropped_imgs.append(img[x1:x2, y1:y2])
+            cropped = img[x1:x2, y1:y2]
+
+            # if crop are too big
+            if any(np.array(cropped.shape) <= 0):
+                print('WARNING: crop is too big:')
+                print(img.shape)
+                print(box)
+                cropped_imgs.append(img)
+            else:
+                cropped_imgs.append(img[x1:x2, y1:y2])
 
         return cropped_imgs
