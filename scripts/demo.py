@@ -135,7 +135,7 @@ def predict(images_dir, db, net, detector, bs):
         db_idxs.extend([x[0][0] for x in db_out])
         gt_idxs.extend(ids)
 
-    return {'db_idx': db_idxs, 'test_name': [int(x.stem) for x in imgs_paths]}
+    return {'db_idx': db_idxs, 'test_name': gt_idxs}
 
 
 def main():

@@ -6,7 +6,7 @@ import tensorflow as tf
 
 
 class FaceDetector:
-    """Wrapper for face detection using MTCNN."""
+    """Wrapper for face detection."""
 
     def __init__(self, saved_model_tf):
         """Class constructor.
@@ -17,12 +17,10 @@ class FaceDetector:
             Loaded TF saved model.
 
         """
-        # loaded = tf.saved_model.load(model_dir)
-        # self._det = loaded.signatures['serving_default']
         self._det = saved_model_tf
 
     @staticmethod
-    def unpad_boxes(boxes, pad_params):
+    def _unpad_boxes(boxes, pad_params):
         """Recover the padded output effect."""
         img_h, img_w, img_pad_h, img_pad_w = pad_params
         reshaped_bb = np.reshape(boxes, [-1, 2, 2])
@@ -33,7 +31,7 @@ class FaceDetector:
         return boxes
 
     @staticmethod
-    def pad_img(img, max_steps=32):
+    def _pad_img(img, max_steps=32):
         """Pad image to suitable shape.
 
         Parameters
@@ -67,6 +65,7 @@ class FaceDetector:
         return img, pad_params
 
     def _apply(self, inp):
+        """Apply net to input tensor and return bounding box."""
         outputs = self._det(inp)
         boxes_batch = outputs['tf_op_layer_CombinedNonMaxSuppression'].numpy()
         boxes_batch = np.squeeze(boxes_batch, axis=1)  # model returns 1 box
@@ -86,31 +85,29 @@ class FaceDetector:
         Returns
         -------
         np.array
-            Cropped face.
+            Cropped face or source image if no face was found.
 
         """
         # prepare data
         rgb_rs_batch = [cv2.resize(x, rs_size) for x in imgs_batch]
-        pad_batch = [self.pad_img(x) for x in rgb_rs_batch]
+        pad_batch = [self._pad_img(x) for x in rgb_rs_batch]
 
         pad_params = [x[1] for x in pad_batch]
         imgs_pad = [x[0] for x in pad_batch]
 
         inp = tf.constant(imgs_pad, dtype=tf.float32)
-
         boxes_batch = self._apply(inp)
-        # confs = outputs['tf_op_layer_CombinedNonMaxSuppression_1'].numpy()
 
         # postprocessing
-        boxes_batch = [self.unpad_boxes(x, y)
+        boxes_batch = [self._unpad_boxes(x, y)
                        for x, y in zip(boxes_batch, pad_params)]
-
-        cropped_imgs = self.crop(imgs_batch, boxes_batch)
+        cropped_imgs = self._crop(imgs_batch, boxes_batch)
 
         return cropped_imgs
 
     @staticmethod
-    def crop(images, boxes):
+    def _crop(images, boxes):
+        """Crop images using boxes and return cropped images."""
         cropped_imgs = []
         for img, box in zip(images, boxes):
             box = np.abs(box)
@@ -124,9 +121,9 @@ class FaceDetector:
 
             # if crop are too big
             if any(np.array(cropped.shape) <= 0):
-                print('WARNING: crop is too big:')
-                print(img.shape)
-                print(box)
+                print('WARNING: crop is too big or face not found:')
+                print('Image shape:', img.shape)
+                print('Detected box:', box)
                 cropped_imgs.append(img)
             else:
                 cropped_imgs.append(img[x1:x2, y1:y2])

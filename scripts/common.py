@@ -4,6 +4,7 @@ import tensorflow as tf
 
 
 def set_memory_growth():
+    """Set memory allocation more economical."""
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:
         try:

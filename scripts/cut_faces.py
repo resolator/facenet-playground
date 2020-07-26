@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*
+"""Detect, cut and save faces."""
 import cv2
 import sys
 import argparse
@@ -41,7 +42,7 @@ def main():
     detector = FaceDetector(det)
 
     imgs_paths = list(args.images_dir.glob('*'))
-    for i in tqdm(range(0, len(imgs_paths), args.bs)):
+    for i in tqdm(range(0, len(imgs_paths), args.bs), desc='Cutting'):
         batch = imgs_paths[i:i + args.bs]
         imgs_raw = [cv2.imread(str(x)) for x in batch]
         faces = detector.detect_and_cut(imgs_raw)
