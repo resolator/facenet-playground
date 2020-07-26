@@ -2,7 +2,7 @@
 """FaceNet inference implementation."""
 import cv2
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 
 
 class FaceNet:
@@ -91,4 +91,4 @@ class FaceNet:
                                     feed_dict={self._img_ph: preprocessed_imgs,
                                                self._is_training_ph: False})
 
-        return embeddings
+        return embeddings.tolist()
