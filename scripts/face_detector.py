@@ -1,37 +1,80 @@
 # -*- coding: utf-8 -*
-"""Class for face detection using OpenCV."""
+"""Wrapper for face detection."""
 import cv2
 import numpy as np
-from pathlib import Path
+import tensorflow as tf
 
 
 class FaceDetector:
-    """Class for face detection using OpenCV."""
+    """Wrapper for face detection using MTCNN."""
 
-    def __init__(self, scale_factor=1.1, min_neighbors=3,
-                 model_name='haarcascade_frontalface_alt.xml'):
-        """Class constructor."""
-        self._scale_factor = scale_factor
-        self._min_neighbors = min_neighbors
+    def __init__(self, saved_model_tf):
+        """Class constructor.
 
-        model_path = str(Path(cv2.__file__).parent.joinpath(
-            'data/' + model_name)
-        )
-        self._cascade = cv2.CascadeClassifier()
-        if not self._cascade.load(model_path):
-            raise RuntimeError(
-                'can\'t load {} model. Try default model.'.format(model_name)
-            )
+        Parameters
+        ----------
+        saved_model_tf : tf.saved_model
+            Loaded TF saved model.
 
-    def detect_and_cut(self, img, equalize=True):
+        """
+        # loaded = tf.saved_model.load(model_dir)
+        # self._det = loaded.signatures['serving_default']
+        self._det = saved_model_tf
+
+    @staticmethod
+    def unpad_boxes(boxes, pad_params):
+        """Recover the padded output effect."""
+        img_h, img_w, img_pad_h, img_pad_w = pad_params
+        reshaped_bb = np.reshape(boxes, [-1, 2, 2])
+        recover_xy = reshaped_bb * [(img_pad_w + img_w) / img_w,
+                                    (img_pad_h + img_h) / img_h]
+        boxes = np.reshape(recover_xy, [4])
+
+        return boxes
+
+    @staticmethod
+    def pad_img(img, max_steps=32):
+        """Pad image to suitable shape.
+
+        Parameters
+        ----------
+        img : numpy.ndarray
+            Read image.
+        max_steps : int
+            The number from train config (default is 32).
+
+        Returns
+        -------
+        tuple
+            Padded image and padding params for recovering.
+
+        """
+        img_h, img_w, _ = img.shape
+
+        img_pad_h = 0
+        if img_h % max_steps > 0:
+            img_pad_h = max_steps - img_h % max_steps
+
+        img_pad_w = 0
+        if img_w % max_steps > 0:
+            img_pad_w = max_steps - img_w % max_steps
+
+        padd_val = np.mean(img, axis=(0, 1)).astype(np.uint8)
+        img = cv2.copyMakeBorder(img, 0, img_pad_h, 0, img_pad_w,
+                                 cv2.BORDER_CONSTANT, value=padd_val.tolist())
+        pad_params = (img_h, img_w, img_pad_h, img_pad_w)
+
+        return img, pad_params
+
+    def detect_and_cut(self, imgs_batch, rs_size=(150, 150)):
         """Detect faces, cut first one and return resulted image.
 
         Parameters
         ----------
-        img : np.array
-            Read BGR image.
-        equalize : bool
-            Do cv2.equalizeHist() before detection.
+        imgs_batch : array of numpy.ndarray
+            Read BGR images.
+        rs_size : tuple
+            Resize images to this size before forward pass.
 
         Returns
         -------
@@ -39,70 +82,33 @@ class FaceDetector:
             Cropped face.
 
         """
-        cv2.namedWindow('img', cv2.WINDOW_NORMAL)
+        # prepare data
+        rgb_rs_batch = [cv2.resize(x[:, :, ::-1], rs_size) for x in imgs_batch]
+        pad_batch = [self.pad_img(x) for x in rgb_rs_batch]
 
-        g_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        if equalize:
-            cv2.imshow('img', g_img)
-            cv2.waitKey()
-            g_img = cv2.equalizeHist(g_img)
+        pad_params = [x[1] for x in pad_batch]
+        imgs_pad = [x[0] for x in pad_batch]
 
-        faces = self._cascade.detectMultiScale(
-            image=g_img,
-            scaleFactor=self._scale_factor,
-            minNeighbors=self._min_neighbors
-        )
+        inp = tf.constant(imgs_pad, dtype=tf.float32)
 
-        if len(faces) > 1:
-            print('WARNING: multiple faces detected.')
+        outputs = self._det(inp)
 
-        print(faces)
-        face = self._postproc_faces(img, faces)
+        boxes_batch = outputs['tf_op_layer_CombinedNonMaxSuppression'].numpy()
+        # confs = outputs['tf_op_layer_CombinedNonMaxSuppression_1'].numpy()
 
-        print(img.shape)
-        cv2.imshow('img', img)
-        cv2.waitKey()
-        cv2.imshow('img', g_img)
-        cv2.waitKey()
-        res = img[face[0]:face[2], face[1]:face[3]]
-        cv2.imshow('img', res)
-        cv2.waitKey()
+        # postprocessing
+        boxes_batch = np.squeeze(boxes_batch, axis=1)  # model returns 1 box
+        boxes_batch = [self.unpad_boxes(x, y)
+                       for x, y in zip(boxes_batch, pad_params)]
 
-        return res
+        cropped_imgs = []
+        for img, box in zip(imgs_batch, boxes_batch):
+            # relative x1, y1, x2, y2
+            x1 = int(img.shape[0] * box[0])
+            y1 = int(img.shape[1] * box[1])
+            x2 = int(img.shape[0] * box[2])
+            y2 = int(img.shape[1] * box[3])
 
-    @staticmethod
-    def _postproc_faces(img, faces):
-        """Found faces postprocessing.
+            cropped_imgs.append(img[x1:x2, y1:y2])
 
-        Parameters
-        ----------
-        img : np.array
-            Image where faces have been found.
-        faces : array-like
-            Array with found faces using cv2.CascadeClassifier.
-
-        Returns
-        -------
-        List
-            Biggest fitted to image bounding box (x_min, y_min, x_max, y_max)
-            or empty list.
-
-        """
-        if len(faces) == 0:
-            return faces
-
-        spaces = []
-        for face in faces:
-            # convert bb format
-            face[2], face[3] = face[0] + face[2], face[1] + face[3]
-
-            # fit to image
-            face = np.abs(face)
-            face[2] = max([face[2], img.shape[0]])
-            face[3] = max([face[3], img.shape[1]])
-
-            # calc bb space
-            spaces.append((face[2] - face[0]) * (face[3] - face[1]))
-
-        # return biggest bb
-        return faces[np.argmax(spaces)]
+        return cropped_imgs
