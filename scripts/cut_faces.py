@@ -9,7 +9,7 @@ import tensorflow as tf
 from tqdm import tqdm
 from pathlib import Path
 from face_detector import FaceDetector
-from common import set_memory_growth, get_ds
+from common import set_memory_growth
 
 
 def get_args():
