@@ -7,11 +7,13 @@ import nmslib
 import argparse
 
 import pandas as pd
+import tensorflow as tf
 
 from tqdm import tqdm
 from pathlib import Path
 from face_net import FaceNet
 from face_detector import FaceDetector
+from common import set_memory_growth
 
 
 def get_args():
@@ -28,20 +30,12 @@ def get_args():
     parser.add_argument('--model-path',
                         default=sys.path[0] + '/../data/facenet.pb',
                         help='Path to saved model.')
+    parser.add_argument('--detector-model-dir',
+                        default=sys.path[0] + '/../data/face_detector/',
+                        help='Path to dir with tf saved model for detector.')
     parser.add_argument('--bs', type=int, default=1,
                         help='Batch size for testing dir. Increasing could '
                              'speed up testing.')
-    parser.add_argument('--scale-factor', type=float, default=1.01,
-                        help='Hyperparameter for face detection.')
-    parser.add_argument('--min-neighbors', type=int, default=5,
-                        help='Hyperparameter for face detection.')
-    parser.add_argument('--detector-name',
-                        default='haarcascade_frontalface_alt.xml',
-                        choices=['haarcascade_frontalface_alt.xml',
-                                 'haarcascade_frontalface_default.xml',
-                                 'haarcascade_frontalface_alt_tree.xml',
-                                 'haarcascade_frontalface_alt2.xml'],
-                        help='Name of the cascade config (model name).')
     parser.add_argument('--save-to', type=Path,
                         help='Path to save dir.')
 
@@ -95,23 +89,37 @@ def predict(images_dir, db, net, detector, bs=1):
 
     """
     imgs_paths = list(images_dir.glob('*'))
-
     db_idxs = []
-    for i in tqdm(range(0, len(imgs_paths), bs), desc='Predicting'):
-        batch_paths = imgs_paths[i:i + bs]
-        imgs = [cv2.imread(str(x)) for x in batch_paths]
-        print(batch_paths[0])
-        print(imgs[0])
-        faces = [detector.detect_and_cut(x) for x in imgs]
-        embds = net.calc_embeddings(faces)
-        db_idxs.extend([x[0][0] for x in db.knnQueryBatch(embds, k=1)])
+    gt_idxs = []
+    for emb_batch, ids in calc_embeddings(imgs_paths, detector, net, bs):
+        db_out = db.knnQueryBatch(emb_batch, k=1)
+        db_idxs.extend([x[0][0] for x in db_out])
+        gt_idxs.extend(ids)
 
     return {'db_idx': db_idxs, 'test_name': [int(x.stem) for x in imgs_paths]}
+
+
+def get_ds(imgs_dir):
+    ds = tf.data.Dataset
+    pass
+
+
+def calc_embeddings(imgs_paths, detector, net, bs=1):
+    for i in tqdm(range(0, len(imgs_paths), bs), desc='Processing'):
+        batch_paths = imgs_paths[i:i + bs]
+        imgs_batch = [cv2.imread(str(x)) for x in batch_paths]
+        faces_batch = detector.detect_and_cut(imgs_batch)
+        emb_batch = net.calc_embeddings(faces_batch)
+
+        ids = [int(x.stem) for x in batch_paths]
+
+        yield emb_batch, ids
 
 
 def main():
     """Application entry point."""
     args = get_args()
+    set_memory_growth()
 
     if args.img_path is None and args.testing_dir is None:
         raise RuntimeError(
@@ -121,20 +129,25 @@ def main():
     if args.testing_dir is not None and args.save_to is None:
         raise NotImplementedError('pass also --save-to with --testing-dir.')
 
-    # calculate embeddings and create a database
+    # initialize nets
+    print('\nNets initialization')
+    loaded = tf.saved_model.load(args.detector_model_dir)
+    det = loaded.signatures['serving_default']
+
+    detector = FaceDetector(det)
     net = FaceNet(args.model_path)
-    detector = FaceDetector(scale_factor=args.scale_factor,
-                            min_neighbors=args.min_neighbors,
-                            model_name=args.detector_name)
     db = nmslib.init(method='hnsw', space='l2')
 
-    for img_path in args.database_dir.glob('*'):
-        emb = net.calc_embeddings([str(img_path)])[0]
-        db.addDataPoint(data=emb, id=int(img_path.stem))
+    # calculate embeddings and create a database
+    print('\nBulding database')
+    imgs_paths = list(args.database_dir.glob('*'))
+    for emb_batch, ids in calc_embeddings(imgs_paths, detector, net, args.bs):
+        db.addDataPointBatch(data=emb_batch, ids=ids)
 
-    db.createIndex(print_progress=True)
+    db.createIndex()
 
     # demo work
+    print('\nDemo')
     if args.img_path is not None:
         # TODO: do something with output
         predict_once(args.img_path, db, net)
