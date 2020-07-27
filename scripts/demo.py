@@ -42,7 +42,7 @@ def get_args():
     return parser.parse_args()
 
 
-def calc_embeddings(imgs_paths, detector, net, bs=1):
+def calc_embeddings(imgs_paths, detector, net, bs=1, desc=''):
     """Calculate embeddings (with faces extraction) for given list of paths.
 
     Parameters
@@ -55,6 +55,8 @@ def calc_embeddings(imgs_paths, detector, net, bs=1):
         Instance of the FaceNet.
     bs : int
         Batch size.
+    desc : str
+        Optional description for tqdm loop.
 
     Returns
     -------
@@ -62,7 +64,7 @@ def calc_embeddings(imgs_paths, detector, net, bs=1):
         Array on embeddings with shape [len(
 
     """
-    for i in range(0, len(imgs_paths), bs):
+    for i in tqdm(range(0, len(imgs_paths), bs), desc=desc):
         batch_paths = imgs_paths[i:i + bs]
         imgs_batch = [cv2.imread(str(x))[:, :, ::-1] for x in batch_paths]
         faces_batch = detector.detect_and_cut(imgs_batch)
@@ -127,8 +129,8 @@ def predict(images_dir, db, net, detector, bs):
     db_idxs = []
     gt_idxs = []
 
-    gen = calc_embeddings(imgs_paths, detector, net, bs)
-    for emb_batch, ids in tqdm(gen, desc='Predicting'):
+    gen = calc_embeddings(imgs_paths, detector, net, bs, desc='Predicting')
+    for emb_batch, ids in gen:
         db_out = db.knnQueryBatch(emb_batch, k=1)
         db_idxs.extend([x[0][0] for x in db_out])
         gt_idxs.extend(ids)
@@ -161,8 +163,9 @@ def main():
     # calculate embeddings and create a database
     print('\nBulding database')
     imgs_paths = list(args.database_dir.glob('*'))
-    gen = calc_embeddings(imgs_paths, detector, net, args.bs)
-    for emb_batch, ids in tqdm(gen, 'Building database'):
+    gen = calc_embeddings(imgs_paths, detector, net, args.bs,
+                          desc='Building database')
+    for emb_batch, ids in gen:
         db.addDataPointBatch(data=emb_batch, ids=ids)
 
     db.createIndex()
