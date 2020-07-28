@@ -61,4 +61,9 @@ Use `<script_name>.py --help` to see scripts usages.
 
 ## Evaluation results
 
-Coming soon.
+Current accuracy: 67.88%.
+
+For evaluation by yourself use `scripts/evaluate.py`. For example:
+```bash
+./scripts/evaluate.py --gt-tsv data/gt.tsv --pd-tsv data/pd.tsv
+```
