@@ -59,11 +59,18 @@ source .venv/bin/activate
 
 Use `<script_name>.py --help` to see scripts usages.
 
-## Evaluation results
-
-Current accuracy: 67.88%.
-
 For evaluation by yourself use `scripts/evaluate.py`. For example:
 ```bash
 ./scripts/evaluate.py --gt-tsv data/gt.tsv --pd-tsv data/pd.tsv
 ```
+
+
+## Evaluation results
+
+- 2020-08-09: Accuracy increased to 76.4%. Achieved with the following command:
+```bash
+./scripts/demo.py --database-dir /data/facenet/datasets/mark/ --testing-dir /data/facenet/datasets/test/ --save-to /data/facenet/datasets/tmp --bs
+250 --space l2 --img-size 160 160 --expand-factors 0.25 0.2 0.25 0.05
+```
+
+- 2020-07-28: Current accuracy: 67.88%.

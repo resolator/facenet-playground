@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*
 """FaceNet inference implementation."""
-import cv2
-import numpy as np
 import tensorflow.compat.v1 as tf
 
 
@@ -35,54 +33,23 @@ class FaceNet:
         self._is_training_ph = graph.get_tensor_by_name('phase_train:0')
         self._emb_op = graph.get_tensor_by_name('embeddings:0')
 
-    @staticmethod
-    def _preprocess(cv_rgb_img):
-        """Preprocess image before forward pass.
-
-        Parameters
-        ----------
-        cv_rgb_img : np.array
-            3-dimensional array (image).
-
-        Returns
-        -------
-        np.array
-            Preprocessed image.
-
-        """
-        mean = np.mean(cv_rgb_img)
-        std = np.std(cv_rgb_img)
-        std_adj = np.maximum(std, 1.0 / np.sqrt(cv_rgb_img.size))
-        res = np.multiply(np.subtract(cv_rgb_img, mean), 1 / std_adj)
-
-        return res
-
-    def calc_embeddings(self, cv_rgb_imgs):
+    def calc_embeddings(self, imgs_batch):
         """Calculate embeddings for given images.
 
         Parameters
         ----------
-        cv_rgb_imgs : array-like
-            Array with RGB images.
+        imgs_batch : tf.EagerTensor
+            TF EagerTensor with resized to (160, 160) faces.
 
         Returns
         -------
-        np.array
-            An array with calculated embeddings for each image.
+        list
+            A list with calculated embeddings for each image.
 
         """
-        # resize
-        model_img_shape = (160, 160)
-        resized_imgs = [cv2.resize(x, model_img_shape,
-                                   interpolation=cv2.INTER_LINEAR)
-                        for x in cv_rgb_imgs]
-
-        # preprocess
-        preprocessed_imgs = [self._preprocess(x) for x in resized_imgs]
-
-        # calculate embeddings
+        np_imgs_batch = imgs_batch.numpy()
         embeddings = self._sess.run(self._emb_op,
-                                    feed_dict={self._img_ph: preprocessed_imgs,
+                                    feed_dict={self._img_ph: np_imgs_batch,
                                                self._is_training_ph: False})
 
         return embeddings.tolist()
