@@ -11,21 +11,22 @@ import tensorflow as tf
 
 from tqdm import tqdm
 from pathlib import Path
+
 from face_net import FaceNet
-from common import set_memory_growth
 from face_detector import FaceDetector
+from common import set_memory_growth, get_ds
 
 
 def get_args():
     """Arguments parser."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--database-dir', type=Path, required=True,
+    parser.add_argument('--database-dir', required=True,
                         help='Path to dir with images only for create a '
                              'database.')
-    parser.add_argument('--testing-dir', type=Path,
+    parser.add_argument('--testing-dir',
                         help='Path to dir with images only for search in '
                              'database.')
-    parser.add_argument('--img-path',
+    parser.add_argument('--img-path', type=Path,
                         help='Path to image for search in database.')
     parser.add_argument('--model-path',
                         default=sys.path[0] + '/../data/facenet.pb',
@@ -36,88 +37,65 @@ def get_args():
     parser.add_argument('--bs', type=int, default=1,
                         help='Batch size for testing dir. Increasing could '
                              'speed up testing.')
+    parser.add_argument('--img-size', type=int, nargs=2, default=(150, 150),
+                        help='Resize all images to this size before run.')
+    parser.add_argument('--keep-ratio', action='store_true',
+                        help='Keep ratio when resize image '
+                             '(diff will be padded).')
+    parser.add_argument('--expand-factors', type=float, nargs=4,
+                        help='Expand resulted detections by factors '
+                             '(top, bottom, right, left).')
+    parser.add_argument('--space', default='l2',
+                        choices=['l2', 'cosinesimil'],
+                        help='Space for embeddings.')
     parser.add_argument('--save-to', type=Path,
                         help='Path to save dir.')
 
     return parser.parse_args()
 
 
-def calc_embeddings(imgs_paths, detector, net, bs=1, desc=''):
+def calc_embeddings(ds, detector, net, desc=''):
     """Calculate embeddings (with faces extraction) for given list of paths.
 
     Parameters
     ----------
-    imgs_paths : array-like
-        Paths to images for calculate embeddings.
+    ds : tensorflow.data.Dataset
+        Created TF dataset.
     detector : FaceDetector
         Instance of the FaceDetector.
     net : FaceNet
         Instance of the FaceNet.
-    bs : int
-        Batch size.
     desc : str
         Optional description for tqdm loop.
 
     Returns
     -------
-    array-like
-        Array on embeddings with shape [len(
+    tuple
+        Embedding and images IDs.
 
     """
-    for i in tqdm(range(0, len(imgs_paths), bs), desc=desc):
-        batch_paths = imgs_paths[i:i + bs]
-        imgs_batch = [cv2.imread(str(x))[:, :, ::-1] for x in batch_paths]
+    for imgs_batch, paths_batch in tqdm(ds, desc=desc):
         faces_batch = detector.detect_and_cut(imgs_batch)
         emb_batch = net.calc_embeddings(faces_batch)
 
-        ids = [int(x.stem) for x in batch_paths]
+        ids = [int(Path(x.numpy().decode('utf-8')).stem) for x in paths_batch]
 
         yield emb_batch, ids
 
 
-def predict_once(img_path, db, net, detector):
-    """Search closest neighbor for image in the database.
-
-    Parameters
-    ----------
-    img_path : str
-        Path to image for search in the database.
-    db : nmslib.Index
-        nmslib database.
-    net : FaceNet
-        Instance of FaceNet.
-    detector : FaceDetector
-        Instance of FaceDetector.
-
-    Returns
-    -------
-    int
-        Index of the closest neighbor in the database.
-
-    """
-    img = cv2.imread(img_path)[:, :, ::-1]  # BGR2RGB
-    face = detector.detect_and_cut([img])[0]
-    emb = net.calc_embeddings([face])[0]
-    db_idx = db.knnQuery(emb, k=1)[0][0]
-
-    return db_idx
-
-
-def predict(images_dir, db, net, detector, bs):
+def predict(ds, db, net, detector):
     """Search closest neighbor in the database for each image in images_dir.
 
     Parameters
     ----------
-    images_dir : pathlib.Path
-        Path to the dir with images for search in the database.
+    ds : tensorflow.data.Dataset
+        Created TF dataset.
     db : nmslib.Index
         nmslib database.
     net : FaceNet
         Instance of the FaceNet.
     detector : FaceDetector
         Instance of the FaceDetector.
-    bs : int
-        Batch size (increasing could speed up calculation).
 
     Returns
     -------
@@ -125,11 +103,10 @@ def predict(images_dir, db, net, detector, bs):
         Dict with closest indexes in the database and image paths.
 
     """
-    imgs_paths = list(images_dir.glob('*'))
     db_idxs = []
     gt_idxs = []
 
-    gen = calc_embeddings(imgs_paths, detector, net, bs, desc='Predicting')
+    gen = calc_embeddings(ds, detector, net, 'Predicting')
     for emb_batch, ids in gen:
         db_out = db.knnQueryBatch(emb_batch, k=1)
         db_idxs.extend([x[0][0] for x in db_out])
@@ -154,17 +131,17 @@ def main():
     # initialize nets
     print('\nNets initialization')
     loaded = tf.saved_model.load(args.detector_model_dir)
-    det = loaded.signatures['serving_default']
-    detector = FaceDetector(det)
+    det_tf = loaded.signatures['serving_default']
+    detector = FaceDetector(det_tf, args.expand_factors)
 
     net = FaceNet(args.model_path)
-    db = nmslib.init(method='hnsw', space='l2')
+    db = nmslib.init(method='hnsw', space=args.space)
 
     # calculate embeddings and create a database
     print('\nBulding database')
-    imgs_paths = list(args.database_dir.glob('*'))
-    gen = calc_embeddings(imgs_paths, detector, net, args.bs,
-                          desc='Building database')
+    db_ds = get_ds(args.database_dir, args.bs, args.img_size, args.keep_ratio)
+    gen = calc_embeddings(db_ds, detector, net, 'Building database')
+
     for emb_batch, ids in gen:
         db.addDataPointBatch(data=emb_batch, ids=ids)
 
@@ -173,8 +150,14 @@ def main():
     # demo work
     print('\nDemo')
     if args.img_path is not None:
-        img_id = predict_once(args.img_path, db, net, detector)
-        closets_img_path = args.database_dir.joinpath(str(img_id) + '.jpg')
+        ds = get_ds(str(args.img_path.parent),
+                    args.bs,
+                    args.img_size,
+                    args.keep_ratio,
+                    exts=[args.img_path.name])
+        img_id = predict(ds, db, net, detector)['db_idx'][0]
+        closets_img_path = Path(args.database_dir).joinpath(
+            str(img_id) + '.jpg')
         img = cv2.imread(str(closets_img_path))
         print('Closest img path:', closets_img_path)
 
@@ -183,7 +166,10 @@ def main():
         cv2.waitKey()
 
     if args.testing_dir is not None:
-        predicted = predict(args.testing_dir, db, net, detector, args.bs)
+        ds = get_ds(args.testing_dir, args.bs, args.img_size, args.keep_ratio)
+        predicted = predict(ds, db, net, detector)
+
+        # save results
         args.save_to.mkdir(parents=True, exist_ok=True)
         save_file = args.save_to.joinpath('predicts.tsv')
         df = pd.DataFrame(predicted)

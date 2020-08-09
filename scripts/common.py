@@ -45,7 +45,7 @@ def ds_map_fn(img_path_tf, img_size=(224, 224), max_steps=32,
 
 
 def get_ds(root_dir, bs=1, img_size=(150, 150), keep_ratio=False,
-           exts=('jpg', 'png')):
+           exts=('*.jpg', '*.png')):
     """Create and return a TF dataset.
 
     Parameters
@@ -59,7 +59,7 @@ def get_ds(root_dir, bs=1, img_size=(150, 150), keep_ratio=False,
     keep_ratio : bool
         Keep ratio when resize image (diff will be padded).
     exts : array-like
-        Array with images extensions for load.
+        Array with images extensions for load (type with "*.").
 
     Returns
     -------
@@ -70,7 +70,7 @@ def get_ds(root_dir, bs=1, img_size=(150, 150), keep_ratio=False,
     if root_dir[-1] != '/':
         root_dir = root_dir + '/'
 
-    patterns = [root_dir + '*.' + x for x in exts]
+    patterns = [root_dir + x for x in exts]
     ds = tf.data.Dataset.list_files(patterns, shuffle=False)
 
     autotune = tf.data.experimental.AUTOTUNE
